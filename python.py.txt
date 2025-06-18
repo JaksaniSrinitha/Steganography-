@@ -1,0 +1,82 @@
+from Crypto.Cipher import AES
+from Crypto.Hash import SHA256
+from Crypto.Random import get_random_bytes
+from PIL import Image
+import base64
+
+# --- Encryption & Decryption ---
+def encrypt_message(message, password):
+    key = SHA256.new(password.encode()).digest()
+    cipher = AES.new(key, AES.MODE_EAX)
+    nonce = cipher.nonce
+    ciphertext, tag = cipher.encrypt_and_digest(message.encode())
+    return base64.b64encode(nonce + ciphertext).decode()
+
+def decrypt_message(encoded_text, password):
+    key = SHA256.new(password.encode()).digest()
+    decoded = base64.b64decode(encoded_text)
+    nonce = decoded[:16]
+    ciphertext = decoded[16:]
+    cipher = AES.new(key, AES.MODE_EAX, nonce=nonce)
+    return cipher.decrypt(ciphertext).decode()
+
+# --- LSB Steganography ---
+def hide_data_in_image(image_path, data, output_path):
+    image = Image.open(image_path)
+    binary_data = ''.join(format(ord(char), '08b') for char in data) + '1111111111111110'  # EOF marker
+    img_data = list(image.getdata())
+    
+    idx = 0
+    new_data = []
+
+    for pixel in img_data:
+        new_pixel = []
+        for channel in pixel[:3]:
+            if idx < len(binary_data):
+                new_channel = channel & ~1 | int(binary_data[idx])
+                idx += 1
+            else:
+                new_channel = channel
+            new_pixel.append(new_channel)
+        if len(pixel) == 4:
+            new_pixel.append(pixel[3])  # Keep alpha
+        new_data.append(tuple(new_pixel))
+
+    image.putdata(new_data)
+    image.save(output_path)
+    print(f"[+] Data hidden in {output_path}")
+
+def extract_data_from_image(image_path):
+    image = Image.open(image_path)
+    img_data = list(image.getdata())
+    binary = ''
+
+    for pixel in img_data:
+        for channel in pixel[:3]:
+            binary += str(channel & 1)
+
+    bytes_data = [binary[i:i+8] for i in range(0, len(binary), 8)]
+    message = ''
+    for byte in bytes_data:
+        if byte == '11111110':  # EOF marker
+            break
+        message += chr(int(byte, 2))
+    return message
+
+# --- Usage Example ---
+if __name__ == '__main__':
+    # Inputs
+    secret_text = "This is a hidden secret!"
+    password = "mysecurepassword"
+    cover_image = "input.png"     # Use a .png image
+    stego_image = "output.png"
+
+    # Encrypt & Hide
+    encrypted = encrypt_message(secret_text, password)
+    hide_data_in_image(cover_image, encrypted, stego_image)
+
+    # Extract & Decrypt
+    extracted = extract_data_from_image(stego_image)
+    decrypted = decrypt_message(extracted, password)
+
+    print(f"[=] Decrypted message: {decrypted}")
